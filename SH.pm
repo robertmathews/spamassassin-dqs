@@ -45,6 +45,7 @@ sub new {
   my $sa_version_full = Mail::SpamAssassin::Version();
   my $sa_version = $sa_version_full;
   $sa_version =~ tr/\.//d;
+  $sa_version = substr $sa_version, 0, 3;
   if ($sa_version < 341) {
    print("\nSHPlugin: ************************** WARNING *************************\n");
    print("SHPlugin: This plugin will work only with SpamAssassin 3.4.1 and above\n");
@@ -113,6 +114,7 @@ sub _init_email_re {
   my ($self) = @_;
   my $sa_version = Mail::SpamAssassin::Version();
   $sa_version =~ tr/\.//d;
+  $sa_version = substr $sa_version, 0, 3;
   # This is an ugly hack to make the regex work with SA 3.4.1 and possibly 3.4.0. Not recommended as TLDs are not updated
   # dinamically like in 3.4.2 where they are updated via sa-update
   if ($sa_version < 342) {
@@ -121,17 +123,35 @@ sub _init_email_re {
   }
   # Some regexp tips courtesy of http://www.regular-expressions.info/email.html
   # full email regex v0.02
-  $self->{email_regex} = qr/
-    (?=.{0,64}\@)                       # limit userpart to 64 chars (and speed up searching?)
-    (?<![a-z0-9!#\$%&'*+\/=?^_`{|}~-])  # start boundary
-    (                                   # capture email
-    [a-z0-9!#\$%&'*+\/=?^_`{|}~-]+      # no dot in beginning
-    (?:\.[a-z0-9!#\$%&'*+\/=?^_`{|}~-]+)* # no consecutive dots, no ending dot
-    \@
-    (?:[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?\.){1,4} # max 4x61 char parts (should be enough?)
-    $self->{main}->{registryboundaries}->{valid_tlds_re} # ends with valid tld
-    )
-  /xi;
+  if ($sa_version < 343) {
+    # Add the "make sure domain ends here" code to prevent "example.com"
+    # from being wrongly parsed as "example.co" (this code is already present
+    # in SpamAssassin 3.4.3)
+    $self->{email_regex} = qr/
+      (?=.{0,64}\@)                       # limit userpart to 64 chars (and speed up searching?)
+      (?<![a-z0-9!#\$%&'*+\/=?^_`{|}~-])  # start boundary
+      (                                   # capture email
+      [a-z0-9!#\$%&'*+\/=?^_`{|}~-]+      # no dot in beginning
+      (?:\.[a-z0-9!#\$%&'*+\/=?^_`{|}~-]+)* # no consecutive dots, no ending dot
+      \@
+      (?:[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?\.){1,4} # max 4x61 char parts (should be enough?)
+      $self->{main}->{registryboundaries}->{valid_tlds_re} # ends with valid tld
+      )
+      (?!(?:[a-z0-9-]|\.[a-z0-9]))      # make sure domain ends here
+    /xi;
+  } else {
+    $self->{email_regex} = qr/
+      (?=.{0,64}\@)                       # limit userpart to 64 chars (and speed up searching?)
+      (?<![a-z0-9!#\$%&'*+\/=?^_`{|}~-])  # start boundary
+      (                                   # capture email
+      [a-z0-9!#\$%&'*+\/=?^_`{|}~-]+      # no dot in beginning
+      (?:\.[a-z0-9!#\$%&'*+\/=?^_`{|}~-]+)* # no consecutive dots, no ending dot
+      \@
+      (?:[a-z0-9](?:[a-z0-9-]{0,59}[a-z0-9])?\.){1,4} # max 4x61 char parts (should be enough?)
+      $self->{main}->{registryboundaries}->{valid_tlds_re} # ends with valid tld
+      )
+    /xi;
+  }
 # lazy man debug
 #open(my $fh, '>', "/tmp/reg") or die "Could not open file $!";
 #print $fh $self->{email_regex};
@@ -428,7 +448,7 @@ sub check_sh_emails {
       # Remove plus sign if present
       $email =~ s/(\+.*\@)/@/;
       my ($this_user, $this_domain )       = split('@', $email);
-      if (!($skip_domains->{$this_domain})) {
+      if ($this_domain && !($skip_domains->{$this_domain})) {
 	# Remove dots from left part if rightpart is gmail.com
         if ($email =~ /\@gmail\.com/) {
           $this_user =~ s/(\.)//g;
